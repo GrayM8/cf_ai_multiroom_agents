@@ -1,14 +1,15 @@
 {
-  "name": "cf_ai_multiroom_agents",
-  "version": "1.0.0",
-  "description": "",
-  "main": "dist/index.js",
+  "name": "edgerooms",
+  "version": "0.0.0",
+  "private": true,
+  "workspaces": ["worker", "web"],
   "scripts": {
-    "build": "tsc"
+    "dev:worker": "npm run dev --workspace=worker",
+    "dev:web": "npm run dev --workspace=web",
+    "dev": "concurrently --names worker,web -c blue,green \"npm run dev:worker\" \"npm run dev:web\"",
+    "deploy:worker": "npm run deploy --workspace=worker"
   },
-  "dependencies": {},
   "devDependencies": {
-    "typescript": "^5.5.3"
-  },
-  "private": true
+    "concurrently": "^9.1.2"
+  }
 }
