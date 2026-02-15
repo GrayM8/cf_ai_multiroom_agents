@@ -6,6 +6,8 @@ const STALE_TIMEOUT_MS = 45_000;
 const MAX_HISTORY = 50;
 const AI_CONTEXT_MESSAGES = 20;
 const AI_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+const HISTORY_FLUSH_INTERVAL = 5; // persist every N messages
+const PINNED_FLUSH_DELAY_MS = 1000; // debounce pinned writes
 
 let nextConnId = 1;
 
@@ -22,18 +24,50 @@ interface PinnedMemory {
   todos: string[];
 }
 
+// Storage keys
+const SK_PINNED = "pinned";
+const SK_HISTORY = "history";
+const SK_OWNER = "ownerId";
+
 export class Room extends DurableObject<Env> {
   private connIds = new Map<WebSocket, string>();
+  private clientIds = new Map<WebSocket, string>();
   private lastSeen = new Map<WebSocket, number>();
   private heartbeatAlarm = false;
   private history: ChatEntry[] = [];
   private pinned: PinnedMemory = { facts: [], decisions: [], todos: [] };
+  private ownerId: string | null = null;
   private aiRunning = false;
+
+  // Persistence bookkeeping
+  private loaded = false;
+  private historyDirty = 0; // messages since last flush
+  private pinnedFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private async ensureLoaded() {
+    if (this.loaded) return;
+    this.loaded = true;
+
+    const map = await this.ctx.storage.get([SK_PINNED, SK_HISTORY, SK_OWNER]);
+    if (map.has(SK_PINNED)) {
+      this.pinned = map.get(SK_PINNED) as PinnedMemory;
+    }
+    if (map.has(SK_HISTORY)) {
+      this.history = map.get(SK_HISTORY) as ChatEntry[];
+    }
+    if (map.has(SK_OWNER)) {
+      this.ownerId = map.get(SK_OWNER) as string;
+    }
+
+    console.log(`[room] loaded state: pinned.facts=${this.pinned.facts.length} history=${this.history.length} owner=${this.ownerId ?? "none"}`);
+  }
 
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("Expected WebSocket", { status: 400 });
     }
+
+    await this.ensureLoaded();
 
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
@@ -54,7 +88,7 @@ export class Room extends DurableObject<Env> {
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer) {
     if (typeof raw !== "string") return;
 
-    let msg: { type?: string; user?: string; text?: string };
+    let msg: { type?: string; user?: string; text?: string; clientId?: string };
     try {
       msg = JSON.parse(raw);
     } catch {
@@ -65,6 +99,24 @@ export class Room extends DurableObject<Env> {
 
     if (msg.type === "ping") {
       ws.send(JSON.stringify({ type: "pong" }));
+      return;
+    }
+
+    if (msg.type === "hello") {
+      await this.ensureLoaded();
+      const clientId = typeof msg.clientId === "string" ? msg.clientId : null;
+      if (clientId) {
+        this.clientIds.set(ws, clientId);
+        if (!this.ownerId) {
+          this.ownerId = clientId;
+          await this.ctx.storage.put(SK_OWNER, this.ownerId);
+          console.log(`[room] owner set to ${clientId}`);
+        }
+      }
+      // Send current history to the joining client
+      for (const entry of this.history) {
+        ws.send(JSON.stringify({ type: "chat", ...entry }));
+      }
       return;
     }
 
@@ -84,21 +136,37 @@ export class Room extends DurableObject<Env> {
       if (fact) {
         this.pinned.facts.push(fact);
         this.broadcastSystem(`Remembered: "${fact}"`);
+        this.schedulePinnedFlush();
       }
     } else if (text.startsWith("/decide ")) {
       const decision = text.slice("/decide ".length).trim();
       if (decision) {
         this.pinned.decisions.push(decision);
         this.broadcastSystem(`Decision recorded: "${decision}"`);
+        this.schedulePinnedFlush();
       }
     } else if (text.startsWith("/todo ")) {
       const todo = text.slice("/todo ".length).trim();
       if (todo) {
         this.pinned.todos.push(todo);
         this.broadcastSystem(`Todo added: "${todo}"`);
+        this.schedulePinnedFlush();
       }
     } else if (text === "/memory") {
       this.broadcastSystem(this.formatPinnedMemory() || "No pinned memory yet.");
+    } else if (text === "/export") {
+      const data = { pinned: this.pinned, history: this.history, ownerId: this.ownerId };
+      this.broadcast({ type: "export", data });
+    } else if (text === "/reset") {
+      const clientId = this.clientIds.get(ws);
+      if (!clientId || clientId !== this.ownerId) {
+        ws.send(JSON.stringify({ type: "chat", user: "System", text: "Only the room owner can /reset.", ts: Date.now() }));
+        return;
+      }
+      this.pinned = { facts: [], decisions: [], todos: [] };
+      this.history = [];
+      await this.ctx.storage.put({ [SK_PINNED]: this.pinned, [SK_HISTORY]: this.history });
+      this.broadcastSystem("Room has been reset by the owner.");
     } else if (text === "/summarize") {
       this.triggerAI("Summarize the recent discussion concisely. Highlight key points, open questions, and any decisions made.");
     } else if (text.startsWith("@ai ")) {
@@ -144,6 +212,26 @@ export class Room extends DurableObject<Env> {
 
     if (this.getOpenSockets().length > 0) {
       await this.ensureHeartbeatAlarm();
+    }
+  }
+
+  // --- Persistence ---
+
+  private schedulePinnedFlush() {
+    if (this.pinnedFlushTimer) return;
+    this.pinnedFlushTimer = setTimeout(() => {
+      this.pinnedFlushTimer = null;
+      this.ctx.storage.put(SK_PINNED, this.pinned);
+      console.log("[room] flushed pinned");
+    }, PINNED_FLUSH_DELAY_MS);
+  }
+
+  private maybeFlushHistory() {
+    this.historyDirty++;
+    if (this.historyDirty >= HISTORY_FLUSH_INTERVAL) {
+      this.historyDirty = 0;
+      this.ctx.storage.put(SK_HISTORY, this.history);
+      console.log("[room] flushed history");
     }
   }
 
@@ -221,6 +309,7 @@ export class Room extends DurableObject<Env> {
     if (this.history.length > MAX_HISTORY) {
       this.history.splice(0, this.history.length - MAX_HISTORY);
     }
+    this.maybeFlushHistory();
     this.broadcast({ type: "chat", ...entry });
   }
 
@@ -232,6 +321,7 @@ export class Room extends DurableObject<Env> {
 
   private cleanup(ws: WebSocket) {
     this.connIds.delete(ws);
+    this.clientIds.delete(ws);
     this.lastSeen.delete(ws);
     try {
       ws.close(1011, "cleanup");

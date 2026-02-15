@@ -15,7 +15,24 @@ interface PresenceMsg {
   count: number;
 }
 
-type ServerMsg = ChatMsg | PresenceMsg | { type: "pong" };
+interface ExportMsg {
+  type: "export";
+  data: unknown;
+}
+
+type ServerMsg = ChatMsg | PresenceMsg | ExportMsg | { type: "pong" };
+
+function getClientId(): string {
+  const key = "edgerooms-client-id";
+  let id = localStorage.getItem(key);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(key, id);
+  }
+  return id;
+}
+
+const CLIENT_ID = getClientId();
 
 function randomName() {
   return "User" + Math.floor(Math.random() * 9000 + 1000);
@@ -30,10 +47,13 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [presence, setPresence] = useState(0);
   const [status, setStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
+  const [exportData, setExportData] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const pingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const displayNameRef = useRef(displayName);
+  displayNameRef.current = displayName;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -61,7 +81,6 @@ export default function App() {
   }, [closeSocket]);
 
   const connect = useCallback(() => {
-    // Guard: don't open a second socket
     if (wsRef.current) {
       console.log(`[ws] connect called but socket exists readyState=${wsRef.current.readyState}`);
       return;
@@ -74,7 +93,6 @@ export default function App() {
     wsRef.current = ws;
 
     ws.addEventListener("open", () => {
-      // Verify this is still the active socket
       if (wsRef.current !== ws) {
         console.log("[ws] open fired for stale socket, closing");
         ws.close(1000, "stale");
@@ -82,6 +100,9 @@ export default function App() {
       }
       console.log("[ws] open");
       setStatus("connected");
+
+      // Send hello handshake
+      ws.send(JSON.stringify({ type: "hello", clientId: CLIENT_ID, user: displayNameRef.current }));
 
       // Start ping interval
       pingRef.current = setInterval(() => {
@@ -97,6 +118,8 @@ export default function App() {
         setMessages((prev) => [...prev, msg]);
       } else if (msg.type === "presence") {
         setPresence(msg.count);
+      } else if (msg.type === "export") {
+        setExportData(JSON.stringify((msg as ExportMsg).data, null, 2));
       }
       // pong is silently consumed
     });
@@ -107,7 +130,6 @@ export default function App() {
         clearInterval(pingRef.current);
         pingRef.current = null;
       }
-      // Only update state if this is still the active socket
       if (wsRef.current === ws) {
         wsRef.current = null;
         setStatus("disconnected");
@@ -116,7 +138,6 @@ export default function App() {
 
     ws.addEventListener("error", (e) => {
       console.log("[ws] error", e);
-      // onclose will fire after onerror, so just let it propagate
     });
   }, [roomId]);
 
@@ -216,6 +237,37 @@ export default function App() {
           Send
         </button>
       </div>
+
+      {/* Export modal */}
+      {exportData && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.4)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 10,
+          }}
+          onClick={() => setExportData(null)}
+        >
+          <div
+            style={{ background: "#fff", borderRadius: 8, padding: "1rem", maxWidth: 500, width: "90%" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: "0 0 0.5rem" }}>Room Export</h3>
+            <textarea
+              readOnly
+              value={exportData}
+              style={{ width: "100%", height: 250, fontFamily: "monospace", fontSize: "0.8rem" }}
+            />
+            <button style={{ marginTop: "0.5rem" }} onClick={() => setExportData(null)}>
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

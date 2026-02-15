@@ -288,3 +288,62 @@ After implementing:
 Keep code clean and readable.
 ```
 
+Prompt 5.
+```aiignore
+Next step: persist room state using Durable Object storage so rooms survive restarts.
+
+Implement durable persistence for:
+- pinned memory (facts/decisions/todos/goal)
+- message history ring buffer (or at least last MAX_HISTORY messages)
+- any metadata needed (e.g., lastAiTs or lastAiIndex if used)
+
+Constraints:
+- Keep runtime behavior the same (chat + AI + commands).
+- No new Cloudflare services yet (no D1/KV/R2/Vectorize).
+- Use Durable Object storage: this.ctx.storage (or this.state.storage depending on current code style).
+- Avoid excessive writes: batch/debounce writes where sensible.
+
+Backend tasks (worker/src/room.ts):
+1) On Room initialization / first request:
+- Load persisted state from storage into memory (pinned + messages + any cursors).
+- If missing, initialize defaults.
+
+2) After state mutations:
+- When pinned changes (/remember /decide /todo /reset):
+  - persist pinned (debounced, e.g. setTimeout or alarm-based flush).
+- When messages append:
+  - persist messages occasionally (e.g. every 5 messages or every 2 seconds), not on every single message.
+  - Keep only last MAX_HISTORY persisted.
+
+3) Add commands:
+- "/export" → broadcast a system message with a compact JSON export (or send as a special message type "export" the frontend can show in a textarea)
+- "/reset" → clears pinned + messages AND persists the cleared state
+- "/reset" should be room-owner only for now:
+  - define owner as the first client that ever connected after creation; store ownerId in durable storage.
+  - clientId can be a random UUID generated in the frontend and sent in hello handshake (see below).
+
+Frontend tasks (web/src/App.tsx):
+1) Add a stable clientId:
+- On first load, generate UUID and store in localStorage.
+- On WebSocket connect, send a hello message:
+  { "type": "hello", "clientId": "...", "user": "DisplayName" }
+- Server uses this to set room owner on first hello if owner not set.
+2) If server sends an "export" message, display it nicely (modal or textarea) but keep UI minimal.
+
+Protocol updates:
+- Add message types:
+  - hello
+  - export (optional)
+- Keep chat messages unchanged.
+
+Deliverables:
+- List files changed
+- Explain persistence strategy and debounce thresholds
+- Provide manual test steps:
+  - connect, /remember, refresh tab, /memory still shows data
+  - open new tab, data still present
+  - /export shows JSON
+  - non-owner cannot /reset (gets system message)
+  - owner can /reset and it persists
+```
+
