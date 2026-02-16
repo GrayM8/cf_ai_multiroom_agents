@@ -35,7 +35,7 @@ export default function App() {
 
       {connected ? (
         <div className="flex flex-1 overflow-hidden">
-          <div className="flex flex-1 flex-col border-r border-zinc-800">
+          <div className="flex min-h-0 flex-1 flex-col border-r border-zinc-800">
             <ChatPanel
               messages={room.messages}
               onSend={room.sendChat}
