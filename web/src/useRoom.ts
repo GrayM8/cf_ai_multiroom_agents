@@ -72,6 +72,9 @@ export function useRoom(roomId: string, displayName: string, autoConnect = false
         case "chat":
           setMessages((prev) => [...prev, msg as ChatMsg]);
           break;
+        case "clear_chat":
+          setMessages([]);
+          break;
         case "presence":
           setPresence(msg.count);
           break;

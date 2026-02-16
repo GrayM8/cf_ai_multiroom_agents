@@ -222,6 +222,7 @@ export class Room extends DurableObject<Env> {
       await this.ctx.storage.put({ [SK_PINNED]: this.pinned, [SK_HISTORY]: this.history, [SK_ARTIFACTS]: this.artifacts });
       this.broadcastMemoryUpdate();
       this.broadcast({ type: "artifact_list", items: [] });
+      this.broadcast({ type: "clear_chat" });
       this.broadcastSystem("Room has been reset by " + (user || "someone") + ".");
     } else if (text === "/summarize") {
       this.triggerAI("Summarize the recent discussion concisely. Highlight key points and open questions.");
