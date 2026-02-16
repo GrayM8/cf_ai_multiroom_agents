@@ -50,7 +50,6 @@ export default function App() {
               isOwner={room.isOwner}
               roomId={roomId}
               onAddMemory={room.addMemory}
-              onSetGoal={room.setGoal}
               onCreateArtifact={room.createArtifact}
               onDeleteArtifact={room.deleteArtifact}
               onGetArtifact={room.getArtifact}

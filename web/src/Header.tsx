@@ -40,7 +40,7 @@ export function Header({
 
   return (
     <header className="flex items-center gap-3 border-b border-zinc-800 bg-zinc-900 px-4 py-2.5">
-      <h1 className="text-lg font-semibold tracking-tight text-zinc-100">EdgeRooms</h1>
+      <h1 className="text-lg font-semibold tracking-tight text-zinc-100">AgentWorkspaces</h1>
       <span className="text-sm text-zinc-500">/</span>
 
       <input
@@ -90,11 +90,9 @@ export function Header({
             <button onClick={onExport} className="text-xs text-zinc-500 hover:text-zinc-300">
               Export
             </button>
-            {isOwner && (
-              <button onClick={onReset} className="text-xs text-red-500/70 hover:text-red-400">
-                Reset
-              </button>
-            )}
+            <button onClick={onReset} className="text-xs text-red-500/70 hover:text-red-400">
+              Reset
+            </button>
           </>
         )}
       </div>

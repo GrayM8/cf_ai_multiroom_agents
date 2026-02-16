@@ -6,9 +6,7 @@ export interface ChatMsg {
 }
 
 export interface PinnedMemory {
-  goal?: string;
-  facts: string[];
-  decisions: string[];
+  memories: string[];
   todos: string[];
 }
 

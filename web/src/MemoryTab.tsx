@@ -3,8 +3,7 @@ import type { PinnedMemory } from "./types";
 
 interface MemoryTabProps {
   pinned: PinnedMemory;
-  onAdd: (kind: "facts" | "decisions" | "todos", text: string) => void;
-  onSetGoal: (text: string) => void;
+  onAdd: (kind: "memories" | "todos", text: string) => void;
 }
 
 function InlineInput({ placeholder, onSubmit }: { placeholder: string; onSubmit: (v: string) => void }) {
@@ -42,65 +41,20 @@ function InlineInput({ placeholder, onSubmit }: { placeholder: string; onSubmit:
   );
 }
 
-export function MemoryTab({ pinned, onAdd, onSetGoal }: MemoryTabProps) {
-  const [editGoal, setEditGoal] = useState(false);
-  const [goalDraft, setGoalDraft] = useState(pinned.goal ?? "");
-
+export function MemoryTab({ pinned, onAdd }: MemoryTabProps) {
   return (
     <div className="space-y-4 text-sm">
-      {/* Goal */}
-      <section>
-        <h3 className="mb-1 text-xs font-semibold uppercase tracking-wider text-zinc-500">Goal</h3>
-        {editGoal ? (
-          <div className="flex gap-1">
-            <input
-              autoFocus
-              className="flex-1 rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-200 outline-none"
-              value={goalDraft}
-              onChange={(e) => setGoalDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") { onSetGoal(goalDraft); setEditGoal(false); }
-                if (e.key === "Escape") setEditGoal(false);
-              }}
-            />
-            <button onClick={() => { onSetGoal(goalDraft); setEditGoal(false); }} className="rounded bg-zinc-700 px-2 py-1 text-xs text-zinc-300">Set</button>
-          </div>
-        ) : (
-          <p
-            className="cursor-pointer text-zinc-400 hover:text-zinc-200"
-            onClick={() => { setGoalDraft(pinned.goal ?? ""); setEditGoal(true); }}
-          >
-            {pinned.goal || "Click to set a goal..."}
-          </p>
-        )}
-      </section>
-
-      {/* Facts */}
+      {/* Pinned Memories */}
       <section>
         <div className="mb-1 flex items-center justify-between">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Facts</h3>
-          <InlineInput placeholder="Add fact..." onSubmit={(v) => onAdd("facts", v)} />
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Pinned Memories</h3>
+          <InlineInput placeholder="Add memory..." onSubmit={(v) => onAdd("memories", v)} />
         </div>
-        {pinned.facts.length === 0 ? (
-          <p className="text-xs text-zinc-600">No facts yet</p>
+        {pinned.memories.length === 0 ? (
+          <p className="text-xs text-zinc-600">No pinned memories yet</p>
         ) : (
           <ul className="space-y-1">
-            {pinned.facts.map((f, i) => <li key={i} className="text-xs text-zinc-400">- {f}</li>)}
-          </ul>
-        )}
-      </section>
-
-      {/* Decisions */}
-      <section>
-        <div className="mb-1 flex items-center justify-between">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Decisions</h3>
-          <InlineInput placeholder="Add decision..." onSubmit={(v) => onAdd("decisions", v)} />
-        </div>
-        {pinned.decisions.length === 0 ? (
-          <p className="text-xs text-zinc-600">No decisions yet</p>
-        ) : (
-          <ul className="space-y-1">
-            {pinned.decisions.map((d, i) => <li key={i} className="text-xs text-zinc-400">- {d}</li>)}
+            {pinned.memories.map((m, i) => <li key={i} className="text-xs text-zinc-400">- {m}</li>)}
           </ul>
         )}
       </section>

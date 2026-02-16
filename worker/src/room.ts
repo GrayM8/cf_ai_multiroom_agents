@@ -18,9 +18,7 @@ interface ChatEntry {
 }
 
 interface PinnedMemory {
-  goal?: string;
-  facts: string[];
-  decisions: string[];
+  memories: string[];
   todos: string[];
 }
 
@@ -45,7 +43,7 @@ export class Room extends DurableObject<Env> {
   private lastSeen = new Map<WebSocket, number>();
   private heartbeatAlarm = false;
   private history: ChatEntry[] = [];
-  private pinned: PinnedMemory = { facts: [], decisions: [], todos: [] };
+  private pinned: PinnedMemory = { memories: [], todos: [] };
   private artifacts: Artifact[] = [];
   private ownerId: string | null = null;
   private aiRunning = false;
@@ -62,7 +60,7 @@ export class Room extends DurableObject<Env> {
     if (map.has(SK_HISTORY)) this.history = map.get(SK_HISTORY) as ChatEntry[];
     if (map.has(SK_OWNER)) this.ownerId = map.get(SK_OWNER) as string;
     if (map.has(SK_ARTIFACTS)) this.artifacts = map.get(SK_ARTIFACTS) as Artifact[];
-    console.log(`[room] loaded: facts=${this.pinned.facts.length} history=${this.history.length} artifacts=${this.artifacts.length} owner=${this.ownerId ?? "none"}`);
+    console.log(`[room] loaded: memories=${this.pinned.memories.length} history=${this.history.length} artifacts=${this.artifacts.length} owner=${this.ownerId ?? "none"}`);
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -128,20 +126,13 @@ export class Room extends DurableObject<Env> {
     if (type === "memory.add") {
       const kind = msg.kind as string;
       const text = (msg.text as string || "").trim();
-      if (!text || !["facts", "decisions", "todos"].includes(kind)) return;
-      (this.pinned[kind as "facts" | "decisions" | "todos"]).push(text);
+      if (!text || !["memories", "todos"].includes(kind)) return;
+      (this.pinned[kind as "memories" | "todos"]).push(text);
       this.schedulePinnedFlush();
       this.broadcastMemoryUpdate();
       return;
     }
 
-    if (type === "memory.setGoal") {
-      const text = (msg.text as string || "").trim();
-      this.pinned.goal = text || undefined;
-      this.schedulePinnedFlush();
-      this.broadcastMemoryUpdate();
-      return;
-    }
 
     // --- Artifact actions ---
     if (type === "artifact.create") {
@@ -214,11 +205,8 @@ export class Room extends DurableObject<Env> {
 
     // Slash commands (backwards compat)
     if (text.startsWith("/remember ")) {
-      const fact = text.slice("/remember ".length).trim();
-      if (fact) { this.pinned.facts.push(fact); this.schedulePinnedFlush(); this.broadcastMemoryUpdate(); }
-    } else if (text.startsWith("/decide ")) {
-      const d = text.slice("/decide ".length).trim();
-      if (d) { this.pinned.decisions.push(d); this.schedulePinnedFlush(); this.broadcastMemoryUpdate(); }
+      const mem = text.slice("/remember ".length).trim();
+      if (mem) { this.pinned.memories.push(mem); this.schedulePinnedFlush(); this.broadcastMemoryUpdate(); }
     } else if (text.startsWith("/todo ")) {
       const t = text.slice("/todo ".length).trim();
       if (t) { this.pinned.todos.push(t); this.schedulePinnedFlush(); this.broadcastMemoryUpdate(); }
@@ -228,20 +216,15 @@ export class Room extends DurableObject<Env> {
       const data = { pinned: this.pinned, history: this.history, artifacts: this.artifacts, ownerId: this.ownerId };
       this.broadcast({ type: "export", data });
     } else if (text === "/reset") {
-      const clientId = this.clientIds.get(ws);
-      if (!clientId || clientId !== this.ownerId) {
-        ws.send(JSON.stringify({ type: "chat", user: "System", text: "Only the room owner can /reset.", ts: Date.now() }));
-        return;
-      }
-      this.pinned = { facts: [], decisions: [], todos: [] };
+      this.pinned = { memories: [], todos: [] };
       this.history = [];
       this.artifacts = [];
       await this.ctx.storage.put({ [SK_PINNED]: this.pinned, [SK_HISTORY]: this.history, [SK_ARTIFACTS]: this.artifacts });
       this.broadcastMemoryUpdate();
       this.broadcast({ type: "artifact_list", items: [] });
-      this.broadcastSystem("Room has been reset by the owner.");
+      this.broadcastSystem("Room has been reset by " + (user || "someone") + ".");
     } else if (text === "/summarize") {
-      this.triggerAI("Summarize the recent discussion concisely. Highlight key points, open questions, and any decisions made.");
+      this.triggerAI("Summarize the recent discussion concisely. Highlight key points and open questions.");
     } else if (text.startsWith("@ai ")) {
       const q = text.slice("@ai ".length).trim();
       if (q) this.triggerAI(q);
@@ -297,7 +280,7 @@ export class Room extends DurableObject<Env> {
 
   private buildArtifactPrompt(artifactType: string, title: string): string {
     const typeInstructions: Record<string, string> = {
-      summary: "Create a concise summary of the recent discussion. Include key points, decisions, and open questions.",
+      summary: "Create a concise summary of the recent discussion. Include key points and open questions.",
       plan: "Create an action plan based on the recent discussion. List concrete next steps with owners if mentioned.",
       notes: "Create clean, organized notes from the recent discussion.",
       custom: title ? `Create content about: ${title}` : "Create useful content based on the recent discussion.",
@@ -357,8 +340,8 @@ export class Room extends DurableObject<Env> {
     const memoryBlock = this.formatPinnedMemory();
     const recentMessages = this.history.slice(-AI_CONTEXT_MESSAGES).map((m) => `${m.user}: ${m.text}`).join("\n");
     const systemPrompt = [
-      "You are the AI host of a collaborative chat room called EdgeRooms.",
-      "You help summarize, clarify decisions, and answer questions. Be concise and helpful.",
+      "You are the AI host of a collaborative chat room called AgentWorkspaces.",
+      "You help summarize and answer questions. Be concise and helpful.",
       "",
       memoryBlock ? `## Pinned Memory\n${memoryBlock}` : "## Pinned Memory\n(none yet)",
       "",
@@ -375,9 +358,7 @@ export class Room extends DurableObject<Env> {
 
   private formatPinnedMemory(): string {
     const parts: string[] = [];
-    if (this.pinned.goal) parts.push(`Goal: ${this.pinned.goal}`);
-    if (this.pinned.facts.length > 0) parts.push(`Facts:\n${this.pinned.facts.map((f) => `- ${f}`).join("\n")}`);
-    if (this.pinned.decisions.length > 0) parts.push(`Decisions:\n${this.pinned.decisions.map((d) => `- ${d}`).join("\n")}`);
+    if (this.pinned.memories.length > 0) parts.push(`Pinned Memories:\n${this.pinned.memories.map((m) => `- ${m}`).join("\n")}`);
     if (this.pinned.todos.length > 0) parts.push(`Todos:\n${this.pinned.todos.map((t) => `- ${t}`).join("\n")}`);
     return parts.join("\n\n");
   }

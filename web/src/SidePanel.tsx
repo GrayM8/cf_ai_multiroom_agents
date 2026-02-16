@@ -13,8 +13,7 @@ interface SidePanelProps {
   artifactDetail: ArtifactFull | null;
   isOwner: boolean;
   roomId: string;
-  onAddMemory: (kind: "facts" | "decisions" | "todos", text: string) => void;
-  onSetGoal: (text: string) => void;
+  onAddMemory: (kind: "memories" | "todos", text: string) => void;
   onCreateArtifact: (opts: { mode: "ai" | "manual"; artifactType: string; title?: string; content?: string }) => void;
   onDeleteArtifact: (id: string) => void;
   onGetArtifact: (id: string) => void;
@@ -50,7 +49,7 @@ export function SidePanel(props: SidePanelProps) {
       </div>
 
       <div className="flex-1 overflow-y-auto p-3">
-        {tab === "memory" && <MemoryTab pinned={props.pinned} onAdd={props.onAddMemory} onSetGoal={props.onSetGoal} />}
+        {tab === "memory" && <MemoryTab pinned={props.pinned} onAdd={props.onAddMemory} />}
         {tab === "artifacts" && (
           <ArtifactsTab
             artifacts={props.artifacts}

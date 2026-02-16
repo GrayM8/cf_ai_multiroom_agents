@@ -20,7 +20,7 @@ export function useRoom(roomId: string, displayName: string) {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [presence, setPresence] = useState(0);
   const [status, setStatus] = useState<ConnectionStatus>("disconnected");
-  const [pinned, setPinned] = useState<PinnedMemory>({ facts: [], decisions: [], todos: [] });
+  const [pinned, setPinned] = useState<PinnedMemory>({ memories: [], todos: [] });
   const [artifacts, setArtifacts] = useState<ArtifactMeta[]>([]);
   const [artifactDetail, setArtifactDetail] = useState<ArtifactFull | null>(null);
   const [exportData, setExportData] = useState<string | null>(null);
@@ -120,13 +120,10 @@ export function useRoom(roomId: string, displayName: string) {
     send({ type: "chat", user: displayNameRef.current, text });
   }, [send]);
 
-  const addMemory = useCallback((kind: "facts" | "decisions" | "todos", text: string) => {
+  const addMemory = useCallback((kind: "memories" | "todos", text: string) => {
     send({ type: "memory.add", kind, text });
   }, [send]);
 
-  const setGoal = useCallback((text: string) => {
-    send({ type: "memory.setGoal", text });
-  }, [send]);
 
   const createArtifact = useCallback((opts: { mode: "ai" | "manual"; artifactType: string; title?: string; content?: string }) => {
     send({ type: "artifact.create", ...opts });
@@ -143,7 +140,7 @@ export function useRoom(roomId: string, displayName: string) {
   return {
     messages, presence, status, pinned, artifacts, artifactDetail, setArtifactDetail,
     exportData, setExportData, isOwner,
-    connect, disconnect, sendChat, addMemory, setGoal,
+    connect, disconnect, sendChat, addMemory,
     createArtifact, deleteArtifact, getArtifact, send,
   };
 }

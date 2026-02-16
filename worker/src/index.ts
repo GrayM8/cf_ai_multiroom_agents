@@ -20,7 +20,7 @@ export default {
     }
 
     if (url.pathname === "/" || url.pathname === "") {
-      return new Response("EdgeRooms worker is running.", {
+      return new Response("AgentWorkspaces worker is running.", {
         status: 200,
         headers: CORS_HEADERS,
       });
