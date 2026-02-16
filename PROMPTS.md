@@ -347,3 +347,112 @@ Deliverables:
   - owner can /reset and it persists
 ```
 
+Prompt 6.
+```aiignore
+We are overhauling the frontend into Option B (“Notion-lite collaboration room”) and shipping Artifacts as a real feature. You may add backend protocol/features as needed.
+
+Constraints:
+- Use TailwindCSS in web/ (dark neutral style).
+- Keep the system simple, but product-like.
+- Preserve existing realtime chat, AI, memory, persistence, ownership.
+- It must work locally with `npm run dev` and remain deployable later.
+- Prefer typed message types over slash-commands for UI actions, but keep slash commands working for power users if easy.
+
+## UX/Layout (web/)
+Implement a 2-column room UI with a fixed header:
+Header:
+- Room title (use roomId for now; optional editable later)
+- Presence pill (count)
+- Connection status text (Connected/Reconnecting/Disconnected)
+- Buttons: Copy Invite Link, Export, Reset (Reset visible only if isOwner)
+
+Main:
+Left column: Chat timeline + composer
+- Group consecutive messages by same sender within 2 minutes.
+- AI messages show “AI” badge and subtle tinted background.
+- System messages appear as subtle separators.
+Composer:
+- input (Enter send, Shift+Enter newline)
+- action buttons: Ask AI (prefill @ai), Summarize, Create Artifact
+
+Right column: Tab panel with tabs: Memory | Artifacts | Room
+Memory tab:
+- Render pinned memory as structured sections (Goal/Decisions/Facts/Todos).
+- Add buttons: Add Fact, Add Decision, Add Todo (open small inline input; submit sends event).
+- Memory updates should NOT clutter chat; update the panel via a server `memory_update` event.
+
+Artifacts tab:
+- List of artifacts (title, type, createdAt, createdBy).
+- Button: New Artifact opens modal:
+  - choose type (Summary/Plan/Notes/Custom)
+  - title (optional)
+  - mode: Generate with AI (default) or Manual
+  - if AI: generate from last 20 messages + pinned memory
+  - if Manual: textarea content
+- On create: show in list and open detail view.
+- Detail view: show content in readable format, copy button.
+- Delete button (only owner for now) with confirm.
+
+Room tab:
+- Show roomId, invite link, owner status, model info (Workers AI), and small debug info.
+
+Tailwind:
+- Add Tailwind properly (postcss, config, etc).
+- Use a dark neutral palette (zinc/neutral) with minimal accent.
+
+## Backend changes (worker/)
+Add first-class state/events for Memory and Artifacts.
+
+Memory:
+- On hello/join, send `memory_update` with the full pinned memory object.
+- When memory changes (via UI event or slash commands), persist and broadcast `memory_update`.
+
+Artifacts:
+- Add persisted artifacts array in DO storage.
+- On hello/join, send `artifact_list` (light list) and allow `artifact.get` if you keep content separate (your choice).
+- Implement messages:
+  - client -> server:
+    - {type:"memory.add", kind:"facts"|"decisions"|"todos", text:string}
+    - {type:"memory.setGoal", text:string}
+    - {type:"artifact.create", mode:"ai"|"manual", artifactType, title?, content? }
+    - {type:"artifact.delete", id}
+    - {type:"artifact.list"}
+  - server -> clients:
+    - {type:"memory_update", pinned}
+    - {type:"artifact_list", items:[{id,type,title,createdAt,createdBy}]}
+    - {type:"artifact_created", artifact}
+    - {type:"artifact_deleted", id}
+- Owner-only enforcement:
+  - Reset and artifact.delete should be owner-only for now.
+
+AI artifact generation:
+- Reuse Workers AI call.
+- For mode="ai": build prompt using pinned memory + last 20 messages.
+- Return content only; generate title if missing (LLM can suggest).
+- Guard: if aiRunning true, reject with system message “AI is busy”.
+
+Keep existing slash commands working:
+- /remember -> memory.add facts
+- /decide -> memory.add decisions
+- /todo -> memory.add todos
+- /summarize -> create artifact type=summary with AI OR just AI chat message (pick one, but be consistent)
+- /export and /reset keep working
+
+## Deliverables
+- Files changed list
+- How to run locally
+- Manual test checklist covering:
+  - memory panel updates across two tabs without chat spam
+  - create AI artifact and see it in both tabs
+  - create manual artifact
+  - export works
+  - reset owner-only
+  - chat still works and AI @ai still works
+```
+
+Prompt 7.
+```aiignore
+Fix layout so the right SidePanel does NOT scroll away with chat. Only the chat message list should scrolls, not the whole page. Additionally, 
+add markdown rendering for AI outputs and artifact content using @tailwindcss/typography and `react-markdown` + `remark-gfm` as necessary. Do   
+NOT enable raw HTML.
+```

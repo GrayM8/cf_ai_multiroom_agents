@@ -6,8 +6,8 @@ const STALE_TIMEOUT_MS = 45_000;
 const MAX_HISTORY = 50;
 const AI_CONTEXT_MESSAGES = 20;
 const AI_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
-const HISTORY_FLUSH_INTERVAL = 5; // persist every N messages
-const PINNED_FLUSH_DELAY_MS = 1000; // debounce pinned writes
+const HISTORY_FLUSH_INTERVAL = 5;
+const PINNED_FLUSH_DELAY_MS = 1000;
 
 let nextConnId = 1;
 
@@ -24,138 +24,208 @@ interface PinnedMemory {
   todos: string[];
 }
 
-// Storage keys
+interface Artifact {
+  id: string;
+  type: string;
+  title: string;
+  content: string;
+  createdAt: number;
+  createdBy: string;
+}
+
 const SK_PINNED = "pinned";
 const SK_HISTORY = "history";
 const SK_OWNER = "ownerId";
+const SK_ARTIFACTS = "artifacts";
 
 export class Room extends DurableObject<Env> {
   private connIds = new Map<WebSocket, string>();
   private clientIds = new Map<WebSocket, string>();
+  private userNames = new Map<WebSocket, string>();
   private lastSeen = new Map<WebSocket, number>();
   private heartbeatAlarm = false;
   private history: ChatEntry[] = [];
   private pinned: PinnedMemory = { facts: [], decisions: [], todos: [] };
+  private artifacts: Artifact[] = [];
   private ownerId: string | null = null;
   private aiRunning = false;
 
-  // Persistence bookkeeping
   private loaded = false;
-  private historyDirty = 0; // messages since last flush
+  private historyDirty = 0;
   private pinnedFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
   private async ensureLoaded() {
     if (this.loaded) return;
     this.loaded = true;
-
-    const map = await this.ctx.storage.get([SK_PINNED, SK_HISTORY, SK_OWNER]);
-    if (map.has(SK_PINNED)) {
-      this.pinned = map.get(SK_PINNED) as PinnedMemory;
-    }
-    if (map.has(SK_HISTORY)) {
-      this.history = map.get(SK_HISTORY) as ChatEntry[];
-    }
-    if (map.has(SK_OWNER)) {
-      this.ownerId = map.get(SK_OWNER) as string;
-    }
-
-    console.log(`[room] loaded state: pinned.facts=${this.pinned.facts.length} history=${this.history.length} owner=${this.ownerId ?? "none"}`);
+    const map = await this.ctx.storage.get([SK_PINNED, SK_HISTORY, SK_OWNER, SK_ARTIFACTS]);
+    if (map.has(SK_PINNED)) this.pinned = map.get(SK_PINNED) as PinnedMemory;
+    if (map.has(SK_HISTORY)) this.history = map.get(SK_HISTORY) as ChatEntry[];
+    if (map.has(SK_OWNER)) this.ownerId = map.get(SK_OWNER) as string;
+    if (map.has(SK_ARTIFACTS)) this.artifacts = map.get(SK_ARTIFACTS) as Artifact[];
+    console.log(`[room] loaded: facts=${this.pinned.facts.length} history=${this.history.length} artifacts=${this.artifacts.length} owner=${this.ownerId ?? "none"}`);
   }
 
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("Expected WebSocket", { status: 400 });
     }
-
     await this.ensureLoaded();
-
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
-
     const connId = `c${nextConnId++}`;
     this.ctx.acceptWebSocket(server);
     this.connIds.set(server, connId);
     this.lastSeen.set(server, Date.now());
-
     console.log(`[room] connect ${connId} | total=${this.getOpenSockets().length}`);
-
     await this.ensureHeartbeatAlarm();
     this.broadcastPresence();
-
     return new Response(null, { status: 101, webSocket: client });
   }
 
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer) {
     if (typeof raw !== "string") return;
-
-    let msg: { type?: string; user?: string; text?: string; clientId?: string };
+    let msg: Record<string, unknown>;
     try {
       msg = JSON.parse(raw);
     } catch {
       return;
     }
-
     this.lastSeen.set(ws, Date.now());
+    const type = msg.type as string;
 
-    if (msg.type === "ping") {
+    if (type === "ping") {
       ws.send(JSON.stringify({ type: "pong" }));
       return;
     }
 
-    if (msg.type === "hello") {
+    if (type === "hello") {
       await this.ensureLoaded();
       const clientId = typeof msg.clientId === "string" ? msg.clientId : null;
+      const userName = typeof msg.user === "string" ? msg.user : "Anonymous";
       if (clientId) {
         this.clientIds.set(ws, clientId);
+        this.userNames.set(ws, userName);
         if (!this.ownerId) {
           this.ownerId = clientId;
           await this.ctx.storage.put(SK_OWNER, this.ownerId);
           console.log(`[room] owner set to ${clientId}`);
         }
       }
-      // Send current history to the joining client
+      // Send initial state to joining client
       for (const entry of this.history) {
         ws.send(JSON.stringify({ type: "chat", ...entry }));
+      }
+      ws.send(JSON.stringify({ type: "memory_update", pinned: this.pinned }));
+      ws.send(JSON.stringify({
+        type: "artifact_list",
+        items: this.artifacts.map(({ id, type, title, createdAt, createdBy }) => ({ id, type, title, createdAt, createdBy })),
+      }));
+      ws.send(JSON.stringify({ type: "room_info", ownerId: this.ownerId, clientId }));
+      return;
+    }
+
+    // --- Memory actions ---
+    if (type === "memory.add") {
+      const kind = msg.kind as string;
+      const text = (msg.text as string || "").trim();
+      if (!text || !["facts", "decisions", "todos"].includes(kind)) return;
+      (this.pinned[kind as "facts" | "decisions" | "todos"]).push(text);
+      this.schedulePinnedFlush();
+      this.broadcastMemoryUpdate();
+      return;
+    }
+
+    if (type === "memory.setGoal") {
+      const text = (msg.text as string || "").trim();
+      this.pinned.goal = text || undefined;
+      this.schedulePinnedFlush();
+      this.broadcastMemoryUpdate();
+      return;
+    }
+
+    // --- Artifact actions ---
+    if (type === "artifact.create") {
+      const mode = msg.mode as string;
+      const artifactType = (msg.artifactType as string) || "notes";
+      const title = (msg.title as string) || "";
+      const content = (msg.content as string) || "";
+      const userName = this.userNames.get(ws) || "Unknown";
+
+      if (mode === "ai") {
+        if (this.aiRunning) {
+          ws.send(JSON.stringify({ type: "chat", user: "System", text: "AI is busy, try again shortly.", ts: Date.now() }));
+          return;
+        }
+        this.aiRunning = true;
+        this.broadcastSystem("AI is generating artifact...");
+        const prompt = this.buildArtifactPrompt(artifactType, title);
+        this.callAI(prompt)
+          .then((aiContent) => {
+            const aiTitle = title || this.inferTitle(artifactType);
+            this.addArtifact(aiTitle, artifactType, aiContent, userName);
+          })
+          .catch((err) => {
+            console.log(`[room] AI artifact error: ${err}`);
+            this.broadcastSystem(`AI error: ${String(err)}`);
+          })
+          .finally(() => { this.aiRunning = false; });
+      } else {
+        this.addArtifact(title || "Untitled", artifactType, content, userName);
       }
       return;
     }
 
-    if (msg.type !== "chat") return;
-    if (typeof msg.user !== "string" || msg.user.length === 0 || msg.user.length > 64) return;
-    if (typeof msg.text !== "string" || msg.text.length === 0 || msg.text.length > 2000) return;
+    if (type === "artifact.delete") {
+      const id = msg.id as string;
+      const clientId = this.clientIds.get(ws);
+      if (!clientId || clientId !== this.ownerId) {
+        ws.send(JSON.stringify({ type: "chat", user: "System", text: "Only the room owner can delete artifacts.", ts: Date.now() }));
+        return;
+      }
+      this.artifacts = this.artifacts.filter((a) => a.id !== id);
+      this.ctx.storage.put(SK_ARTIFACTS, this.artifacts);
+      this.broadcast({ type: "artifact_deleted", id });
+      return;
+    }
 
-    const text = msg.text.trim();
-    const user = msg.user;
+    if (type === "artifact.get") {
+      const id = msg.id as string;
+      const a = this.artifacts.find((x) => x.id === id);
+      if (a) ws.send(JSON.stringify({ type: "artifact_detail", artifact: a }));
+      return;
+    }
 
-    // Broadcast the user's message first
+    if (type === "artifact.list") {
+      ws.send(JSON.stringify({
+        type: "artifact_list",
+        items: this.artifacts.map(({ id, type, title, createdAt, createdBy }) => ({ id, type, title, createdAt, createdBy })),
+      }));
+      return;
+    }
+
+    // --- Chat ---
+    if (type !== "chat") return;
+    if (typeof msg.user !== "string" || (msg.user as string).length === 0 || (msg.user as string).length > 64) return;
+    if (typeof msg.text !== "string" || (msg.text as string).length === 0 || (msg.text as string).length > 2000) return;
+
+    const text = (msg.text as string).trim();
+    const user = msg.user as string;
     this.broadcastChat(user, text);
 
-    // Handle commands
+    // Slash commands (backwards compat)
     if (text.startsWith("/remember ")) {
       const fact = text.slice("/remember ".length).trim();
-      if (fact) {
-        this.pinned.facts.push(fact);
-        this.broadcastSystem(`Remembered: "${fact}"`);
-        this.schedulePinnedFlush();
-      }
+      if (fact) { this.pinned.facts.push(fact); this.schedulePinnedFlush(); this.broadcastMemoryUpdate(); }
     } else if (text.startsWith("/decide ")) {
-      const decision = text.slice("/decide ".length).trim();
-      if (decision) {
-        this.pinned.decisions.push(decision);
-        this.broadcastSystem(`Decision recorded: "${decision}"`);
-        this.schedulePinnedFlush();
-      }
+      const d = text.slice("/decide ".length).trim();
+      if (d) { this.pinned.decisions.push(d); this.schedulePinnedFlush(); this.broadcastMemoryUpdate(); }
     } else if (text.startsWith("/todo ")) {
-      const todo = text.slice("/todo ".length).trim();
-      if (todo) {
-        this.pinned.todos.push(todo);
-        this.broadcastSystem(`Todo added: "${todo}"`);
-        this.schedulePinnedFlush();
-      }
+      const t = text.slice("/todo ".length).trim();
+      if (t) { this.pinned.todos.push(t); this.schedulePinnedFlush(); this.broadcastMemoryUpdate(); }
     } else if (text === "/memory") {
       this.broadcastSystem(this.formatPinnedMemory() || "No pinned memory yet.");
     } else if (text === "/export") {
-      const data = { pinned: this.pinned, history: this.history, ownerId: this.ownerId };
+      const data = { pinned: this.pinned, history: this.history, artifacts: this.artifacts, ownerId: this.ownerId };
       this.broadcast({ type: "export", data });
     } else if (text === "/reset") {
       const clientId = this.clientIds.get(ws);
@@ -165,15 +235,16 @@ export class Room extends DurableObject<Env> {
       }
       this.pinned = { facts: [], decisions: [], todos: [] };
       this.history = [];
-      await this.ctx.storage.put({ [SK_PINNED]: this.pinned, [SK_HISTORY]: this.history });
+      this.artifacts = [];
+      await this.ctx.storage.put({ [SK_PINNED]: this.pinned, [SK_HISTORY]: this.history, [SK_ARTIFACTS]: this.artifacts });
+      this.broadcastMemoryUpdate();
+      this.broadcast({ type: "artifact_list", items: [] });
       this.broadcastSystem("Room has been reset by the owner.");
     } else if (text === "/summarize") {
       this.triggerAI("Summarize the recent discussion concisely. Highlight key points, open questions, and any decisions made.");
     } else if (text.startsWith("@ai ")) {
-      const question = text.slice("@ai ".length).trim();
-      if (question) {
-        this.triggerAI(question);
-      }
+      const q = text.slice("@ai ".length).trim();
+      if (q) this.triggerAI(q);
     }
   }
 
@@ -195,7 +266,6 @@ export class Room extends DurableObject<Env> {
     this.heartbeatAlarm = false;
     const now = Date.now();
     let culled = 0;
-
     for (const ws of this.ctx.getWebSockets()) {
       const last = this.lastSeen.get(ws) ?? 0;
       if (now - last > STALE_TIMEOUT_MS && ws.readyState === WebSocket.READY_STATE_OPEN) {
@@ -205,14 +275,44 @@ export class Room extends DurableObject<Env> {
         culled++;
       }
     }
+    if (culled > 0) this.broadcastPresence();
+    if (this.getOpenSockets().length > 0) await this.ensureHeartbeatAlarm();
+  }
 
-    if (culled > 0) {
-      this.broadcastPresence();
-    }
+  // --- Artifacts ---
 
-    if (this.getOpenSockets().length > 0) {
-      await this.ensureHeartbeatAlarm();
-    }
+  private addArtifact(title: string, artifactType: string, content: string, createdBy: string) {
+    const artifact: Artifact = {
+      id: crypto.randomUUID(),
+      type: artifactType,
+      title,
+      content,
+      createdAt: Date.now(),
+      createdBy,
+    };
+    this.artifacts.push(artifact);
+    this.ctx.storage.put(SK_ARTIFACTS, this.artifacts);
+    this.broadcast({ type: "artifact_created", artifact });
+  }
+
+  private buildArtifactPrompt(artifactType: string, title: string): string {
+    const typeInstructions: Record<string, string> = {
+      summary: "Create a concise summary of the recent discussion. Include key points, decisions, and open questions.",
+      plan: "Create an action plan based on the recent discussion. List concrete next steps with owners if mentioned.",
+      notes: "Create clean, organized notes from the recent discussion.",
+      custom: title ? `Create content about: ${title}` : "Create useful content based on the recent discussion.",
+    };
+    return typeInstructions[artifactType] || typeInstructions.custom;
+  }
+
+  private inferTitle(artifactType: string): string {
+    const d = new Date().toLocaleDateString();
+    const titles: Record<string, string> = {
+      summary: `Summary - ${d}`,
+      plan: `Action Plan - ${d}`,
+      notes: `Notes - ${d}`,
+    };
+    return titles[artifactType] || `Artifact - ${d}`;
   }
 
   // --- Persistence ---
@@ -244,50 +344,32 @@ export class Room extends DurableObject<Env> {
     }
     this.aiRunning = true;
     this.broadcastSystem("AI is thinking...");
-
     this.callAI(userPrompt)
-      .then((response) => {
-        this.broadcastChat("AI", response);
-      })
+      .then((response) => this.broadcastChat("AI", response))
       .catch((err) => {
         console.log(`[room] AI error: ${err}`);
         this.broadcastSystem(`AI error: ${String(err)}`);
       })
-      .finally(() => {
-        this.aiRunning = false;
-      });
+      .finally(() => { this.aiRunning = false; });
   }
 
   private async callAI(userPrompt: string): Promise<string> {
     const memoryBlock = this.formatPinnedMemory();
-    const recentMessages = this.history
-      .slice(-AI_CONTEXT_MESSAGES)
-      .map((m) => `${m.user}: ${m.text}`)
-      .join("\n");
-
+    const recentMessages = this.history.slice(-AI_CONTEXT_MESSAGES).map((m) => `${m.user}: ${m.text}`).join("\n");
     const systemPrompt = [
       "You are the AI host of a collaborative chat room called EdgeRooms.",
-      "You help summarize, clarify decisions, and answer questions.",
-      "Be concise and helpful.",
+      "You help summarize, clarify decisions, and answer questions. Be concise and helpful.",
       "",
       memoryBlock ? `## Pinned Memory\n${memoryBlock}` : "## Pinned Memory\n(none yet)",
       "",
       recentMessages ? `## Recent Messages\n${recentMessages}` : "## Recent Messages\n(none yet)",
     ].join("\n");
-
     console.log(`[room] AI prompt system=${systemPrompt.length}chars user="${userPrompt.slice(0, 80)}"`);
-
     const result = await this.env.AI.run(AI_MODEL, {
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
+      messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
     });
-
     const text = (result as { response?: string }).response;
-    if (typeof text !== "string" || text.length === 0) {
-      throw new Error("Empty AI response");
-    }
+    if (typeof text !== "string" || text.length === 0) throw new Error("Empty AI response");
     return text;
   }
 
@@ -295,20 +377,17 @@ export class Room extends DurableObject<Env> {
     const parts: string[] = [];
     if (this.pinned.goal) parts.push(`Goal: ${this.pinned.goal}`);
     if (this.pinned.facts.length > 0) parts.push(`Facts:\n${this.pinned.facts.map((f) => `- ${f}`).join("\n")}`);
-    if (this.pinned.decisions.length > 0)
-      parts.push(`Decisions:\n${this.pinned.decisions.map((d) => `- ${d}`).join("\n")}`);
+    if (this.pinned.decisions.length > 0) parts.push(`Decisions:\n${this.pinned.decisions.map((d) => `- ${d}`).join("\n")}`);
     if (this.pinned.todos.length > 0) parts.push(`Todos:\n${this.pinned.todos.map((t) => `- ${t}`).join("\n")}`);
     return parts.join("\n\n");
   }
 
-  // --- Broadcast helpers ---
+  // --- Broadcast ---
 
   private broadcastChat(user: string, text: string) {
     const entry: ChatEntry = { user, text, ts: Date.now() };
     this.history.push(entry);
-    if (this.history.length > MAX_HISTORY) {
-      this.history.splice(0, this.history.length - MAX_HISTORY);
-    }
+    if (this.history.length > MAX_HISTORY) this.history.splice(0, this.history.length - MAX_HISTORY);
     this.maybeFlushHistory();
     this.broadcast({ type: "chat", ...entry });
   }
@@ -317,25 +396,24 @@ export class Room extends DurableObject<Env> {
     this.broadcast({ type: "chat", user: "System", text, ts: Date.now() });
   }
 
+  private broadcastMemoryUpdate() {
+    this.broadcast({ type: "memory_update", pinned: this.pinned });
+  }
+
   // --- Connection lifecycle ---
 
   private cleanup(ws: WebSocket) {
     this.connIds.delete(ws);
     this.clientIds.delete(ws);
+    this.userNames.delete(ws);
     this.lastSeen.delete(ws);
-    try {
-      ws.close(1011, "cleanup");
-    } catch {
-      // already closed
-    }
+    try { ws.close(1011, "cleanup"); } catch { /* already closed */ }
   }
 
   private async ensureHeartbeatAlarm() {
     if (this.heartbeatAlarm) return;
     const existing = await this.ctx.storage.getAlarm();
-    if (!existing) {
-      await this.ctx.storage.setAlarm(Date.now() + HEARTBEAT_INTERVAL_MS);
-    }
+    if (!existing) await this.ctx.storage.setAlarm(Date.now() + HEARTBEAT_INTERVAL_MS);
     this.heartbeatAlarm = true;
   }
 
@@ -345,9 +423,7 @@ export class Room extends DurableObject<Env> {
 
   private broadcast(obj: Record<string, unknown>) {
     const data = JSON.stringify(obj);
-    for (const ws of this.getOpenSockets()) {
-      ws.send(data);
-    }
+    for (const ws of this.getOpenSockets()) ws.send(data);
   }
 
   private broadcastPresence() {
@@ -355,8 +431,6 @@ export class Room extends DurableObject<Env> {
     const ids = sockets.map((ws) => this.connIds.get(ws) ?? "?");
     console.log(`[room] presence count=${sockets.length} ids=[${ids.join(",")}]`);
     const data = JSON.stringify({ type: "presence", count: sockets.length });
-    for (const ws of sockets) {
-      ws.send(data);
-    }
+    for (const ws of sockets) ws.send(data);
   }
 }
