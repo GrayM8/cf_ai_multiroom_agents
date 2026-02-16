@@ -14,27 +14,22 @@ const STATUS_LABELS: Record<ConnectionStatus, string> = {
 
 interface HeaderProps {
   roomId: string;
-  setRoomId: (v: string) => void;
   displayName: string;
   setDisplayName: (v: string) => void;
   status: ConnectionStatus;
   presence: number;
-  isOwner: boolean;
-  onConnect: () => void;
   onDisconnect: () => void;
   onExport: () => void;
   onReset: () => void;
 }
 
 export function Header({
-  roomId, setRoomId, displayName, setDisplayName,
-  status, presence, isOwner,
-  onConnect, onDisconnect, onExport, onReset,
+  roomId, displayName, setDisplayName,
+  status, presence,
+  onDisconnect, onExport, onReset,
 }: HeaderProps) {
-  const connected = status !== "disconnected";
-
   const copyInvite = () => {
-    const url = `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(roomId)}`;
+    const url = `${window.location.origin}/r/${encodeURIComponent(roomId)}`;
     navigator.clipboard.writeText(url);
   };
 
@@ -42,14 +37,8 @@ export function Header({
     <header className="flex items-center gap-3 border-b border-zinc-800 bg-zinc-900 px-4 py-2.5">
       <h1 className="text-lg font-semibold tracking-tight text-zinc-100">AgentWorkspaces</h1>
       <span className="text-sm text-zinc-500">/</span>
+      <span className="text-sm font-mono text-zinc-400">{roomId}</span>
 
-      <input
-        className="w-28 rounded bg-zinc-800 px-2 py-1 text-sm text-zinc-200 outline-none focus:ring-1 focus:ring-zinc-600 disabled:opacity-50"
-        placeholder="room-id"
-        value={roomId}
-        onChange={(e) => setRoomId(e.target.value)}
-        disabled={connected}
-      />
       <input
         className="w-32 rounded bg-zinc-800 px-2 py-1 text-sm text-zinc-200 outline-none focus:ring-1 focus:ring-zinc-600"
         placeholder="Display name"
@@ -57,15 +46,9 @@ export function Header({
         onChange={(e) => setDisplayName(e.target.value)}
       />
 
-      {connected ? (
-        <button onClick={onDisconnect} className="rounded bg-zinc-700 px-3 py-1 text-xs font-medium text-zinc-300 hover:bg-zinc-600">
-          Disconnect
-        </button>
-      ) : (
-        <button onClick={onConnect} disabled={!roomId} className="rounded bg-emerald-700 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-600 disabled:opacity-40">
-          Connect
-        </button>
-      )}
+      <button onClick={onDisconnect} className="rounded bg-zinc-700 px-3 py-1 text-xs font-medium text-zinc-300 hover:bg-zinc-600">
+        Leave
+      </button>
 
       <div className="ml-auto flex items-center gap-3">
         {/* Status */}

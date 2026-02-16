@@ -5,7 +5,7 @@ const WORKER_URL = import.meta.env.VITE_WORKER_URL ?? "http://localhost:8787";
 const PING_INTERVAL_MS = 15_000;
 
 function getClientId(): string {
-  const key = "edgerooms-client-id";
+  const key = "agentworkspaces-client-id";
   let id = localStorage.getItem(key);
   if (!id) {
     id = crypto.randomUUID();

@@ -5,7 +5,7 @@ interface RoomTabProps {
 }
 
 export function RoomTab({ roomId, clientId, isOwner }: RoomTabProps) {
-  const inviteUrl = `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(roomId)}`;
+  const inviteUrl = `${window.location.origin}/r/${encodeURIComponent(roomId)}`;
 
   return (
     <div className="space-y-4 text-xs">

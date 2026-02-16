@@ -15,7 +15,8 @@
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "tailwindcss": "^4.1.18"
+    "tailwindcss": "^4.1.18",
+    "wouter": "^3.9.0"
   },
   "devDependencies": {
     "@types/react": "^19.1.0",
