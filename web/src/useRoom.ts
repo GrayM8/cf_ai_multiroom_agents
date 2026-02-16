@@ -139,7 +139,7 @@ export function useRoom(roomId: string, displayName: string, autoConnect = false
   }, [send]);
 
   const createArtifact = useCallback((opts: { mode: "ai" | "manual"; artifactType: string; title?: string; content?: string }) => {
-    send({ type: "artifact.create", ...opts });
+    send({ type: "artifact.create", ...opts, user: displayNameRef.current });
   }, [send]);
 
   const deleteArtifact = useCallback((id: string) => {

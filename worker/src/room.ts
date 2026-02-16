@@ -170,7 +170,7 @@ export class Room extends DurableObject<Env> {
       const artifactType = (msg.artifactType as string) || "notes";
       const title = (msg.title as string) || "";
       const content = (msg.content as string) || "";
-      const userName = this.userNames.get(ws) || "Unknown";
+      const userName = (msg.user as string) || this.userNames.get(ws) || "Unknown";
 
       if (mode === "ai") {
         if (this.aiRunning) {
