@@ -5,9 +5,14 @@ export interface ChatMsg {
   ts: number;
 }
 
+export interface TodoItem {
+  text: string;
+  done: boolean;
+}
+
 export interface PinnedMemory {
   memories: string[];
-  todos: string[];
+  todos: TodoItem[];
 }
 
 export interface ArtifactMeta {

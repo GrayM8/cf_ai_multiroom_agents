@@ -59,9 +59,10 @@ export function RoomView({ roomId }: { roomId: string }) {
               pinned={room.pinned}
               artifacts={room.artifacts}
               artifactDetail={room.artifactDetail}
-              isOwner={room.isOwner}
               roomId={roomId}
               onAddMemory={room.addMemory}
+              onRemoveMemory={room.removeMemory}
+              onToggleTodo={room.toggleTodo}
               onCreateArtifact={room.createArtifact}
               onDeleteArtifact={room.deleteArtifact}
               onGetArtifact={room.getArtifact}

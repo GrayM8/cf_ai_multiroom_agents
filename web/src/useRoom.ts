@@ -24,7 +24,6 @@ export function useRoom(roomId: string, displayName: string, autoConnect = false
   const [artifacts, setArtifacts] = useState<ArtifactMeta[]>([]);
   const [artifactDetail, setArtifactDetail] = useState<ArtifactFull | null>(null);
   const [exportData, setExportData] = useState<string | null>(null);
-  const [isOwner, setIsOwner] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const pingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -99,10 +98,7 @@ export function useRoom(roomId: string, displayName: string, autoConnect = false
           break;
         case "artifact_deleted":
           setArtifacts((prev) => prev.filter((a) => a.id !== msg.id));
-          if (artifactDetail?.id === msg.id) setArtifactDetail(null);
-          break;
-        case "room_info":
-          setIsOwner(msg.clientId === msg.ownerId);
+          setArtifactDetail((prev) => prev?.id === msg.id ? null : prev);
           break;
         case "export":
           setExportData(JSON.stringify(msg.data, null, 2));
@@ -134,6 +130,13 @@ export function useRoom(roomId: string, displayName: string, autoConnect = false
     send({ type: "memory.add", kind, text });
   }, [send]);
 
+  const removeMemory = useCallback((kind: "memories" | "todos", index: number) => {
+    send({ type: "memory.remove", kind, index });
+  }, [send]);
+
+  const toggleTodo = useCallback((index: number) => {
+    send({ type: "memory.toggle", index });
+  }, [send]);
 
   const createArtifact = useCallback((opts: { mode: "ai" | "manual"; artifactType: string; title?: string; content?: string }) => {
     send({ type: "artifact.create", ...opts });
@@ -149,8 +152,8 @@ export function useRoom(roomId: string, displayName: string, autoConnect = false
 
   return {
     messages, presence, status, pinned, artifacts, artifactDetail, setArtifactDetail,
-    exportData, setExportData, isOwner,
-    connect, disconnect, sendChat, addMemory,
+    exportData, setExportData,
+    connect, disconnect, sendChat, addMemory, removeMemory, toggleTodo,
     createArtifact, deleteArtifact, getArtifact, send,
   };
 }

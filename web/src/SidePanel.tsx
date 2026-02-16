@@ -11,9 +11,10 @@ interface SidePanelProps {
   pinned: PinnedMemory;
   artifacts: ArtifactMeta[];
   artifactDetail: ArtifactFull | null;
-  isOwner: boolean;
   roomId: string;
   onAddMemory: (kind: "memories" | "todos", text: string) => void;
+  onRemoveMemory: (kind: "memories" | "todos", index: number) => void;
+  onToggleTodo: (index: number) => void;
   onCreateArtifact: (opts: { mode: "ai" | "manual"; artifactType: string; title?: string; content?: string }) => void;
   onDeleteArtifact: (id: string) => void;
   onGetArtifact: (id: string) => void;
@@ -76,12 +77,11 @@ export function SidePanel(props: SidePanelProps) {
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">
-        {tab === "memory" && <MemoryTab pinned={props.pinned} onAdd={props.onAddMemory} />}
+        {tab === "memory" && <MemoryTab pinned={props.pinned} onAdd={props.onAddMemory} onRemove={props.onRemoveMemory} onToggle={props.onToggleTodo} />}
         {tab === "artifacts" && (
           <ArtifactsTab
             artifacts={props.artifacts}
             detail={props.artifactDetail}
-            isOwner={props.isOwner}
             onCreate={props.onCreateArtifact}
             onDelete={props.onDeleteArtifact}
             onOpen={props.onGetArtifact}

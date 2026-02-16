@@ -549,3 +549,22 @@ Deliverable:
   - send 3 messages, @ai responds
   - run /summarize, should summarize those messages (not say “no discussion”)
 ```
+
+Prompt 12.
+```aiignore
+Task: Add memory/todo management controls and fix artifact deletion bug.                                                                          
+                                                                               
+  1. Delete memories & todos                                                                                                                        
+  Add a trash icon to the right of each pinned memory and todo item. Clicking it removes the item for all connected clients via a new memory.remove 
+  WebSocket message.
+
+  2. Todo completion
+  - Replace the decorative checkbox with a functional one that toggles done/not-done state via memory.toggle.
+  - Completed todos should appear struck through and dimmed.
+  - Update the todo data structure from string[] to { text: string; done: boolean }[], with backward-compatible migration for existing data.
+  - Update formatPinnedMemory() so the AI sees [x]/[ ] status.
+
+  3. Fix artifact deletion
+  Deleting an artifact doesn't remove it from the frontend list. The artifact_deleted handler in useRoom.ts references artifactDetail from a stale
+  closure — use a functional updater instead.
+```

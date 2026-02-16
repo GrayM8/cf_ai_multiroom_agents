@@ -17,9 +17,14 @@ interface ChatEntry {
   ts: number;
 }
 
+interface TodoItem {
+  text: string;
+  done: boolean;
+}
+
 interface PinnedMemory {
   memories: string[];
-  todos: string[];
+  todos: TodoItem[];
 }
 
 interface Artifact {
@@ -33,7 +38,6 @@ interface Artifact {
 
 const SK_PINNED = "pinned";
 const SK_HISTORY = "history";
-const SK_OWNER = "ownerId";
 const SK_ARTIFACTS = "artifacts";
 
 export class Room extends DurableObject<Env> {
@@ -45,7 +49,6 @@ export class Room extends DurableObject<Env> {
   private history: ChatEntry[] = [];
   private pinned: PinnedMemory = { memories: [], todos: [] };
   private artifacts: Artifact[] = [];
-  private ownerId: string | null = null;
   private aiRunning = false;
 
   private loaded = false;
@@ -55,12 +58,19 @@ export class Room extends DurableObject<Env> {
   private async ensureLoaded() {
     if (this.loaded) return;
     this.loaded = true;
-    const map = await this.ctx.storage.get([SK_PINNED, SK_HISTORY, SK_OWNER, SK_ARTIFACTS]);
-    if (map.has(SK_PINNED)) this.pinned = map.get(SK_PINNED) as PinnedMemory;
+    const map = await this.ctx.storage.get([SK_PINNED, SK_HISTORY, SK_ARTIFACTS]);
+    if (map.has(SK_PINNED)) {
+      this.pinned = map.get(SK_PINNED) as PinnedMemory;
+      // Migrate old string[] todos to TodoItem[]
+      if (this.pinned.todos.length > 0 && typeof this.pinned.todos[0] === "string") {
+        this.pinned.todos = (this.pinned.todos as unknown as string[]).map((t) => ({ text: t, done: false }));
+        this.ctx.storage.put(SK_PINNED, this.pinned);
+        console.log("[room] migrated todos from string[] to TodoItem[]");
+      }
+    }
     if (map.has(SK_HISTORY)) this.history = map.get(SK_HISTORY) as ChatEntry[];
-    if (map.has(SK_OWNER)) this.ownerId = map.get(SK_OWNER) as string;
     if (map.has(SK_ARTIFACTS)) this.artifacts = map.get(SK_ARTIFACTS) as Artifact[];
-    console.log(`[room] loaded: memories=${this.pinned.memories.length} history=${this.history.length} artifacts=${this.artifacts.length} owner=${this.ownerId ?? "none"}`);
+    console.log(`[room] loaded: memories=${this.pinned.memories.length} history=${this.history.length} artifacts=${this.artifacts.length}`);
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -105,11 +115,6 @@ export class Room extends DurableObject<Env> {
       if (clientId) {
         this.clientIds.set(ws, clientId);
         this.userNames.set(ws, userName);
-        if (!this.ownerId) {
-          this.ownerId = clientId;
-          await this.ctx.storage.put(SK_OWNER, this.ownerId);
-          console.log(`[room] owner set to ${clientId}`);
-        }
       }
       // Send initial state to joining client
       for (const entry of this.history) {
@@ -120,7 +125,6 @@ export class Room extends DurableObject<Env> {
         type: "artifact_list",
         items: this.artifacts.map(({ id, type, title, createdAt, createdBy }) => ({ id, type, title, createdAt, createdBy })),
       }));
-      ws.send(JSON.stringify({ type: "room_info", ownerId: this.ownerId, clientId }));
       return;
     }
 
@@ -129,12 +133,36 @@ export class Room extends DurableObject<Env> {
       const kind = msg.kind as string;
       const text = (msg.text as string || "").trim();
       if (!text || !["memories", "todos"].includes(kind)) return;
-      (this.pinned[kind as "memories" | "todos"]).push(text);
+      if (kind === "todos") {
+        this.pinned.todos.push({ text, done: false });
+      } else {
+        this.pinned.memories.push(text);
+      }
       this.schedulePinnedFlush();
       this.broadcastMemoryUpdate();
       return;
     }
 
+    if (type === "memory.remove") {
+      const kind = msg.kind as string;
+      const index = msg.index as number;
+      if (!["memories", "todos"].includes(kind)) return;
+      const arr = this.pinned[kind as "memories" | "todos"];
+      if (index < 0 || index >= arr.length) return;
+      arr.splice(index, 1);
+      this.schedulePinnedFlush();
+      this.broadcastMemoryUpdate();
+      return;
+    }
+
+    if (type === "memory.toggle") {
+      const index = msg.index as number;
+      if (index < 0 || index >= this.pinned.todos.length) return;
+      this.pinned.todos[index].done = !this.pinned.todos[index].done;
+      this.schedulePinnedFlush();
+      this.broadcastMemoryUpdate();
+      return;
+    }
 
     // --- Artifact actions ---
     if (type === "artifact.create") {
@@ -170,11 +198,6 @@ export class Room extends DurableObject<Env> {
 
     if (type === "artifact.delete") {
       const id = msg.id as string;
-      const clientId = this.clientIds.get(ws);
-      if (!clientId || clientId !== this.ownerId) {
-        ws.send(JSON.stringify({ type: "chat", user: "System", text: "Only the room owner can delete artifacts.", ts: Date.now() }));
-        return;
-      }
       this.artifacts = this.artifacts.filter((a) => a.id !== id);
       this.ctx.storage.put(SK_ARTIFACTS, this.artifacts);
       this.broadcast({ type: "artifact_deleted", id });
@@ -211,11 +234,11 @@ export class Room extends DurableObject<Env> {
       if (mem) { this.pinned.memories.push(mem); this.schedulePinnedFlush(); this.broadcastMemoryUpdate(); }
     } else if (text.startsWith("/todo ")) {
       const t = text.slice("/todo ".length).trim();
-      if (t) { this.pinned.todos.push(t); this.schedulePinnedFlush(); this.broadcastMemoryUpdate(); }
+      if (t) { this.pinned.todos.push({ text: t, done: false }); this.schedulePinnedFlush(); this.broadcastMemoryUpdate(); }
     } else if (text === "/memory") {
       this.broadcastSystem(this.formatPinnedMemory() || "No pinned memory yet.");
     } else if (text === "/export") {
-      const data = { pinned: this.pinned, history: this.history, artifacts: this.artifacts, ownerId: this.ownerId };
+      const data = { pinned: this.pinned, history: this.history, artifacts: this.artifacts };
       this.broadcast({ type: "export", data });
     } else if (text === "/reset") {
       this.pinned = { memories: [], todos: [] };
@@ -372,7 +395,7 @@ export class Room extends DurableObject<Env> {
   private formatPinnedMemory(): string {
     const parts: string[] = [];
     if (this.pinned.memories.length > 0) parts.push(`Pinned Memories:\n${this.pinned.memories.map((m) => `- ${m}`).join("\n")}`);
-    if (this.pinned.todos.length > 0) parts.push(`Todos:\n${this.pinned.todos.map((t) => `- ${t}`).join("\n")}`);
+    if (this.pinned.todos.length > 0) parts.push(`Todos:\n${this.pinned.todos.map((t) => `- [${t.done ? "x" : " "}] ${t.text}`).join("\n")}`);
     return parts.join("\n\n");
   }
 

@@ -6,7 +6,6 @@ import type { ArtifactMeta, ArtifactFull } from "./types";
 interface ArtifactsTabProps {
   artifacts: ArtifactMeta[];
   detail: ArtifactFull | null;
-  isOwner: boolean;
   onCreate: (opts: { mode: "ai" | "manual"; artifactType: string; title?: string; content?: string }) => void;
   onDelete: (id: string) => void;
   onOpen: (id: string) => void;
@@ -15,7 +14,7 @@ interface ArtifactsTabProps {
 
 const TYPES = ["summary", "plan", "notes", "custom"] as const;
 
-export function ArtifactsTab({ artifacts, detail, isOwner, onCreate, onDelete, onOpen, onCloseDetail }: ArtifactsTabProps) {
+export function ArtifactsTab({ artifacts, detail, onCreate, onDelete, onOpen, onCloseDetail }: ArtifactsTabProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [mode, setMode] = useState<"ai" | "manual">("ai");
   const [artifactType, setArtifactType] = useState<string>("summary");
@@ -58,22 +57,20 @@ export function ArtifactsTab({ artifacts, detail, isOwner, onCreate, onDelete, o
             >
               Copy
             </button>
-            {isOwner && (
-              confirmDelete === detail.id ? (
-                <button
-                  onClick={() => { onDelete(detail.id); onCloseDetail(); setConfirmDelete(null); }}
-                  className="rounded bg-red-900/30 px-2.5 py-1 text-[11px] text-red-400 transition hover:bg-red-900/50"
-                >
-                  Confirm Delete
-                </button>
-              ) : (
-                <button
-                  onClick={() => setConfirmDelete(detail.id)}
-                  className="rounded border border-zinc-800/60 px-2.5 py-1 text-[11px] text-red-500/60 transition hover:text-red-400"
-                >
-                  Delete
-                </button>
-              )
+            {confirmDelete === detail.id ? (
+              <button
+                onClick={() => { onDelete(detail.id); onCloseDetail(); setConfirmDelete(null); }}
+                className="rounded bg-red-900/30 px-2.5 py-1 text-[11px] text-red-400 transition hover:bg-red-900/50"
+              >
+                Confirm Delete
+              </button>
+            ) : (
+              <button
+                onClick={() => setConfirmDelete(detail.id)}
+                className="rounded border border-zinc-800/60 px-2.5 py-1 text-[11px] text-red-500/60 transition hover:text-red-400"
+              >
+                Delete
+              </button>
             )}
           </div>
         </div>
