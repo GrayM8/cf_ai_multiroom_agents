@@ -1,6 +1,7 @@
-# EdgeRooms — Prompt Log
+# AgentWorkspaces — AI Prompt Log
 
-Prompts and key decisions logged here starting after initial scaffolding.
+The following are the main prompts used to generate the majority of code for the AgentWorkspaces project.
+These requests were made to a mixture of Anthropic models via Claude Code in CLI and Google Gemini CLI (3-pro-preview).
 
 Prompt 1. 
 ```aiignore
@@ -580,4 +581,14 @@ Prompt 14.
 Add room settings to the Room tab: (1) an editable system prompt textarea that syncs across clients, and (2) a toggle for AI response mode —      
   "respond to all messages" vs "only when mentioned with @ai" (default: mention-only). Persist settings in durable storage, broadcast changes to all
    clients, and reset them on /reset.  
+```
+
+Prompt 15.
+```aiignore
+Add tool calling to the room AI so it can manage room state directly. Define tools for: add/delete/clear memories, add/delete/clear/toggle todos, 
+  and create/delete artifacts. Extract the existing mutation logic into reusable do* methods shared by both WebSocket handlers and AI tool          
+  execution. Use a single tool-call round (call with tools, execute any returned tool calls, then call again without tools to force a text          
+  response). Include indexed [0], [1] labels in the formatted memory/todo list so the AI can reference correct indices. Move chat history from the 
+  system prompt into the user message so the model has immediate conversational context. Keep the system prompt for personality, tool instructions, 
+  pinned data, and artifact list only.
 ```
