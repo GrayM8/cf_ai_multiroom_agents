@@ -145,6 +145,7 @@ This is a portfolio project built to demonstrate Cloudflare's edge platform, not
 - **Single-region Durable Object** — each room's Durable Object lives in one Cloudflare data center (chosen at creation time). Users far from that region will experience higher WebSocket latency.
 - **No message persistence beyond 50** — chat history is capped at 50 entries. Older messages are dropped, not archived.
 - **Ephemeral display names** — usernames are stored in `localStorage` and sent with each message, but there's no identity verification. Anyone can impersonate any name.
+- **No mobile support** — the UI is designed for desktop viewports. The side panel, chat layout, and composer are not responsive.
 
 ---
 
